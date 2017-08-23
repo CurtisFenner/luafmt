@@ -391,6 +391,7 @@ local function spaceTokens(tokens)
 		{"'#", "word"},
 		{"'#", "open"},
 		{"*", "$"},
+		{"close", "open"},
 	}
 
 	local SPACE = {
@@ -409,6 +410,8 @@ local function spaceTokens(tokens)
 	for i, token in ipairs(tokens) do
 		if token.tag == "newline" then
 			table.insert(out, token)
+		elseif token.tag == "empty" then
+			-- skip
 		elseif token.tag == "indent-increase" then
 			table.insert(out, token)
 		elseif token.tag == "indent-decrease" then
@@ -453,11 +456,139 @@ end
 
 local TAB_SIZE = 4
 
+local function keepLongPaired(tokens)
+	error("TODO")
+end
+
+local function breakLongPaired(tokens)
+	assert(tokens[1].tag == "open")
+	assert(tokens[#tokens].tag == "close")
+
+	local out = {}
+
+	return out
+end
+
+local function measureColumn(stack)
+	stack[1].indent = 0
+
+	local c = 0
+	local from = 1
+	for i = #stack, 1, -1 do
+		if stack[i].tag == "newline" and stack[i].indent then
+			from = i
+			break
+		end
+	end
+	local indent = stack[from].indent or 0
+
+	for i = from, #stack do
+		local token = stack[i]
+		if token.tag == "newline" then
+			c = TAB_SIZE * indent
+			token.indent = indent
+		elseif token.tag == "indent-increase" then
+			indent = indent + 1
+		elseif token.tag == "indent-decrease" then
+			indent = indent - 1
+		else
+			c = c + #token.text
+		end
+	end
+	return c
+end
+
 local function breakLong(tokens)
 	local out = {}
 
-	for _, token in ipairs(tokens) do
-		table.insert(out, token)
+	local map = {}
+	local root = {first = 1, last = #tokens}
+	root.container = root
+	local container = root
+	for i, token in ipairs(tokens) do
+		if token.tag:sub(1, 5) == "close" then
+			local c = {
+				tag = "close",
+				first = container.first,
+				last = i,
+				container = container.container,
+			}
+			table.insert(map, c)
+			container.last = i
+			container = container.container
+		elseif token.tag == "open" then
+			local o = {
+				tag = "open",
+				first = i,
+				last = nil,
+				container = container,
+			}
+			table.insert(map, o)
+			container = o
+		else
+			table.insert(map, {container = container})
+		end
+	end
+
+	local function measureWidth(from, to)
+		local width = 0
+		for i = from, to do
+			width = width + #tokens[i].text
+			if tokens[i].tag == "newline" then
+				return math.huge
+			end
+		end
+		return width
+	end
+
+	local function startParen(index)
+		local container = map[index]
+		if not container.tag then
+			return container.container
+		end
+		return container
+	end
+
+	for i, token in ipairs(tokens) do
+		local group = startParen(i)
+		if token.tag == "open" then
+			token.expand = measureColumn(out) + measureWidth(i, group.last) > COLUMN_LIMIT
+		end
+		local expand = tokens[group.first].expand
+
+		if expand then
+			if token.tag == "close" or token.tag == "close-parameters" then
+				local needsNewline = out[#out] and out[#out].tag ~= "newline"
+
+				if needsNewline then
+					table.insert(out, {tag = "indent-decrease", text = ""})
+					table.insert(out, {tag = "newline", text = ""})
+				else
+					table.insert(out, #out, {tag = "indent-decrease", text = ""})
+				end
+			end
+		end
+
+		if token.tag == "space" then
+			if out[#out] and out[#out].tag ~= "newline" then
+				table.insert(out, token)
+			end
+		else
+			table.insert(out, token)
+		end
+
+		if expand then
+			if token.tag == "open" then
+				token.text = token.text
+				table.insert(out, {tag = "indent-increase", text = ""})
+				table.insert(out, {tag = "newline", text = ""})
+			elseif token.tag == "separator" then
+				if tokens[i+1] and tokens[i+1].tag ~= "newline" then
+					-- A newline can already exist from the `end,` construction
+					table.insert(out, {tag = "newline", text = ""})
+				end
+			end
+		end
 	end
 
 	return out
@@ -471,7 +602,7 @@ local function printTokens(tokens)
 	for i, token in ipairs(tokens) do
 		if token.tag == "newline" then
 			io.write("\n")
-			if tokens[i+1] and tokens[i+1].tag ~= "newline" and tokens[i+1].tag ~= "empty" then
+			if tokens[i+1] and tokens[i+1].tag ~= "newline" then
 				io.write(string.rep("\t", indent))
 			end
 		elseif token.tag == "indent-increase" then
