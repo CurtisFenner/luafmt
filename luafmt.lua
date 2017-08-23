@@ -9,7 +9,7 @@ if not file then
 	os.exit(1)
 end
 
-local COLUMN_LIMIT = 80
+local COLUMN_LIMIT = (arg[2] and tonumber(arg[2])) or 80
 
 --------------------------------------------------------------------------------
 
@@ -48,7 +48,7 @@ local TOKENS = {
 		local quote = text:sub(offset, offset)
 		if quote == "\"" or quote == "'" then
 			local back = false
-			for i = offset+1, #text do
+			for i = offset + 1, #text do
 				if back then
 					back = false
 				elseif text:sub(i, i) == "\\" then
@@ -65,7 +65,10 @@ local TOKENS = {
 		local from, to = text:find("^%[=*%[", offset)
 		if from then
 			local size = to - from - 1
-			local _, stop = text:find("%]" .. string.rep("=", size) .. "%]", offset)
+			local _, stop = text:find(
+				"%]" .. string.rep("=", size) .. "%]",
+				offset
+			)
 			assert(stop)
 			return stop, "string"
 		end
@@ -73,15 +76,18 @@ local TOKENS = {
 
 	-- comments
 	function(text, offset)
-		if text:sub(offset, offset+1) == "--" then
+		if text:sub(offset, offset + 1) == "--" then
 			local start, startLen = text:find("^%[=*%[", offset + 2)
 			if start then
 				local size = startLen - start - 1
-				local _, stop = text:find("%]" .. string.rep("=", size) .. "%]", offset)
+				local _, stop = text:find(
+					"%]" .. string.rep("=", size) .. "%]",
+					offset
+				)
 				assert(stop)
 				return stop, "comment"
 			end
-			return (text:find("\n", offset) or #text+1) - 1, "comment"
+			return (text:find("\n", offset) or #text + 1) - 1, "comment"
 		end
 	end,
 
@@ -126,7 +132,7 @@ local TOKENS = {
 		if to then
 			local word = text:sub(from, to)
 			local size = #word
-			
+
 			if IS_KEYWORD[word] then
 				return to, word
 			elseif word == "not" or word == "or" or word == "and" then
@@ -174,9 +180,14 @@ local TOKENS = {
 	end,
 	-- assignment
 	matcher("=", "assign"),
+
+	-- other
+	matcher(".", "other"),
 }
 
 local function tokenize(blob)
+	assert(type(blob) == "string")
+
 	local tokens = {}
 	local offset = 1
 	while offset < #blob do
@@ -243,10 +254,11 @@ local function splitLines(tokens)
 	-- These token tags MUST be the first token in their line when the
 	-- associated function returns `true` for the given context
 	local MIGHT_START = {
-		["do"] = function(line)
+		["do"] = function(line, context)
 			if line[1].tag == "for" or line[1].tag == "while" then
 				return false
 			end
+			context[0].tag = "do-block"
 			return true
 		end,
 		["function"] = function(line, context)
@@ -285,13 +297,6 @@ local function splitLines(tokens)
 		end,
 	}
 
-	local statementBreak = {
-		{"close", "word"},
-		{"word", "word"},
-		{"string", "word"},
-		{"number", "word"},
-	}
-
 	local lines = {{}}
 	for i, token in ipairs(tokens) do
 		local function context(offset)
@@ -301,22 +306,40 @@ local function splitLines(tokens)
 			}
 		end
 
+		-- Check if a break is needed before this token
+		local mightStart = MIGHT_START[token.tag]
+		mightStart = mightStart and mightStart(lines[#lines], context, tokne)
 		if #lines[#lines] == 0 then
-		elseif MUST_START[token.tag] or (MIGHT_START[token.tag] and MIGHT_START[token.tag](lines[#lines], context, token)) then
+		elseif MUST_START[token.tag] or mightStart then
 			table.insert(lines, {})
 		end
 		local line = lines[#lines]
 		table.insert(line, token)
 
-		local semicolon = false
-		for _, pair in ipairs(statementBreak) do
-			if token.tag == pair[1] and context(1).tag == pair[2] then
-				semicolon = true
-			end
+		-- Identify breaks needed between statements
+		local semicolon = token.statementLast or token.statementOnly
+
+		-- Check if a break is needed after this token
+		local mightEnd = MIGHT_END[token.tag]
+		mightEnd = mightEnd and mightEnd(line, context, token)
+		if MUST_END[token.tag] or mightEnd or semicolon then
+			table.insert(lines, {})
 		end
 
-		if MUST_END[token.tag] or (MIGHT_END[token.tag] and MIGHT_END[token.tag](line, context, token)) or semicolon then
-			table.insert(lines, {})
+		-- Identify which `-` are unary operators
+		if token.text == "-" then
+			local before = (tokens[i - 1] and tokens[i - 1].tag) or "^"
+			local UNARY_SIGN = {
+				["^"] = true,
+				["open"] = true,
+				["operator"] = true,
+				["unary-"] = true,
+				["separator"] = true,
+				["assign"] = true,
+			}
+			if UNARY_SIGN[before] then
+				token.tag = "unary-"
+			end
 		end
 	end
 
@@ -342,16 +365,20 @@ local function splitLines(tokens)
 	}
 
 	local out = {}
-	for _, line in ipairs(lines) do
+	for i, line in ipairs(lines) do
 		if DECREASE[line[1].tag] then
 			table.insert(out, {text = "", tag = "indent-decrease"})
 		end
 		table.insert(out, {text = "", tag = "newline"})
 		for _, token in ipairs(line) do
 			if out[#out] and out[#out].tag == "newline" and token.tag == "separator" then
+				-- Swap newline and comma (for after anonymous functions)
 				table.remove(out)
 				table.insert(out, token)
-				table.insert(out, {text = "", tag = "newline"})
+				local needsNewline = i < #line
+				if needsNewline then
+					table.insert(out, {text = "", tag = "newline"})
+				end
 			else
 				table.insert(out, token)
 			end
@@ -363,6 +390,107 @@ local function splitLines(tokens)
 	end
 
 	return out
+end
+
+--------------------------------------------------------------------------------
+
+local function lmatch(pattern, a, b)
+	if pattern == "*" then
+		return true
+	elseif pattern:sub(1, 1) == "'" then
+		return pattern:sub(2) == b
+	end
+	return pattern == a
+end
+
+local function annotateStatementSplits(tokens)
+	local SKIP = {
+		["comment"] = true,
+		["empty"] = true,
+		["whitespace"] = true,
+		["newline"] = true,
+		["indent-increase"] = true,
+		["indent-decrease"] = true,
+	}
+
+	local function predecessor(index)
+		for i = index - 1, 1, -1 do
+			if not SKIP[tokens[i].tag] then
+				return tokens[i]
+			end
+		end
+		return {tag = "^", text = ""}
+	end
+
+	local function successor(index)
+		for i = index + 1, #tokens, 1 do
+			if not SKIP[tokens[i].tag] then
+				return tokens[i]
+			end
+		end
+		return {tag = "$", text = ""}
+	end
+	
+	local CONTROL = {
+		["if"] = true,
+		["then"] = true,
+		["while"] = true,
+		["do"] = true,
+		["repeat"] = true,
+		["until"] = true,
+		["end"] = true,
+		["in"] = true,
+		["else"] = true,
+		["elseif"] = true,
+		["for"] = true,
+	}
+
+	local SPLITS = {
+		{"close", "word"},
+		{"word", "word"},
+		{"string", "word"},
+		{"number", "word"},
+		{"*", "local"},
+		{"*", "return"},
+		{"*", "break"},
+		{"break", "*"},
+		{"';", "*"},
+		{"^", "*"},
+		{"*", "$"},
+	}
+
+	local function isSplit(before, after)
+		if CONTROL[before.tag] or CONTROL[after.tag] then
+			return true
+		end
+		for _, split in ipairs(SPLITS) do
+			local x, y = split[1], split[2]
+			if lmatch(x, before.tag, before.text) and lmatch(y, after.tag, after.text) then
+				return true
+			end
+		end
+		return false
+	end
+
+	for i, token in ipairs(tokens) do
+		if not CONTROL[token.tag] and not SKIP[token.tag] then
+			local before = predecessor(i)
+			local after = successor(i)
+			if isSplit(before, token) then
+				print("*", "(" .. before.tag .. "/" .. before.text .. ") << (" .. token.tag .. "/" .. token.text .. ")")
+				token.statementFirst = true
+			end
+			if isSplit(token, after) then
+				print("*", "(" .. token.tag .. "/" .. token.text ..") >> (" .. after.tag .. "/" .. after.text .. ")")
+				token.statementLast = true
+			end
+			if token.statementFirst and token.statementLast then
+				token.statementOnly = true
+				token.statementFirst = false
+				token.statementLast = false
+			end
+		end
+	end
 end
 
 --------------------------------------------------------------------------------
@@ -392,20 +520,14 @@ local function spaceTokens(tokens)
 		{"'#", "open"},
 		{"*", "$"},
 		{"close", "open"},
+		{"unary-", "*"},
+		{"other", "other"},
 	}
 
 	local SPACE = {
 		{"word", "'{"},
+		{"unary-", "unary-"},
 	}
-
-	local function lmatch(pattern, a, b)
-		if pattern == "*" then
-			return true
-		elseif pattern:sub(1, 1) == "'" then
-			return pattern:sub(2) == b
-		end
-		return pattern == a
-	end
 
 	for i, token in ipairs(tokens) do
 		if token.tag == "newline" then
@@ -417,21 +539,23 @@ local function spaceTokens(tokens)
 		elseif token.tag == "indent-decrease" then
 			table.insert(out, token)
 		else
-			table.insert(out, {
-				text = trimmed(token.text),
-				tag = token.tag,
-			})
-			
+			token.text = trimmed(token.text)
+			table.insert(out, token)
+
 			local before = tokens[i]
-			local after = tokens[i+1] or {tag = "$", text = ""}
+			local after = tokens[i + 1] or {tag = "$", text = ""}
 			local glued = false
 			for _, glue in ipairs(GLUES) do
-				if lmatch(glue[1], before.tag, before.text) and lmatch(glue[2], after.tag, after.text) then
+				local matchBefore = lmatch(glue[1], before.tag, before.text)
+				local matchAfter = lmatch(glue[2], after.tag, after.text)
+				if matchBefore and matchAfter then
 					glued = true
 				end
 			end
 			for _, space in ipairs(SPACE) do
-				if lmatch(space[1], before.tag, before.text) and lmatch(space[2], after.tag, after.text) then
+				local matchBefore = lmatch(space[1], before.tag, before.text)
+				local matchAfter = lmatch(space[2], after.tag, after.text)
+				if matchBefore and matchAfter then
 					glued = false
 				end
 			end
@@ -456,20 +580,11 @@ end
 
 local TAB_SIZE = 4
 
-local function keepLongPaired(tokens)
-	error("TODO")
-end
-
-local function breakLongPaired(tokens)
-	assert(tokens[1].tag == "open")
-	assert(tokens[#tokens].tag == "close")
-
-	local out = {}
-
-	return out
-end
-
 local function measureColumn(stack)
+	if not stack[1] then
+		return 0
+	end
+
 	stack[1].indent = 0
 
 	local c = 0
@@ -506,7 +621,14 @@ local function breakLong(tokens)
 	root.container = root
 	local container = root
 	for i, token in ipairs(tokens) do
-		if token.tag:sub(1, 5) == "close" then
+		local OPENERS = {
+			["open"] = true,
+		}
+		local CLOSERS = {
+			["close"] = true,
+			["close-parameters"] = true,
+		}
+		if CLOSERS[token.tag] or token.statementFirst then
 			local c = {
 				tag = "close",
 				first = container.first,
@@ -516,12 +638,12 @@ local function breakLong(tokens)
 			table.insert(map, c)
 			container.last = i
 			container = container.container
-		elseif token.tag == "open" then
+		elseif OPENERS[token.tag] or token.statementLast then
 			local o = {
 				tag = "open",
 				first = i,
 				last = nil,
-				container = container,
+				container = container
 			}
 			table.insert(map, o)
 			container = o
@@ -551,10 +673,15 @@ local function breakLong(tokens)
 
 	for i, token in ipairs(tokens) do
 		local group = startParen(i)
-		if token.tag == "open" then
-			token.expand = measureColumn(out) + measureWidth(i, group.last) > COLUMN_LIMIT
+		if group.expand == nil then
+			local last = group.last
+			assert(type(last) == "number", "i:" .. i .. ", text:" .. token.text .. ", tag:" .. token.tag .. ", first/last:" .. tostring(group.first) .. "/" .. tostring(group.last))
+			group.expand = measureColumn(out) + measureWidth(i, last) > COLUMN_LIMIT
+			if tokens[last - 1] and tokens[last - 1].tag == "separator" then
+				group.expand = true
+			end
 		end
-		local expand = tokens[group.first].expand
+		local expand = group.expand
 
 		if expand then
 			if token.tag == "close" or token.tag == "close-parameters" then
@@ -564,7 +691,11 @@ local function breakLong(tokens)
 					table.insert(out, {tag = "indent-decrease", text = ""})
 					table.insert(out, {tag = "newline", text = ""})
 				else
-					table.insert(out, #out, {tag = "indent-decrease", text = ""})
+					table.insert(
+						out,
+						#out,
+						{tag = "indent-decrease", text = ""}
+					)
 				end
 			end
 		end
@@ -578,12 +709,14 @@ local function breakLong(tokens)
 		end
 
 		if expand then
+			local needsNewline = tokens[i + 1] and tokens[i + 1].tag ~= "newline"
 			if token.tag == "open" then
-				token.text = token.text
 				table.insert(out, {tag = "indent-increase", text = ""})
-				table.insert(out, {tag = "newline", text = ""})
+				if needsNewline then
+					table.insert(out, {tag = "newline", text = ""})
+				end
 			elseif token.tag == "separator" then
-				if tokens[i+1] and tokens[i+1].tag ~= "newline" then
+				if needsNewline then
 					-- A newline can already exist from the `end,` construction
 					table.insert(out, {tag = "newline", text = ""})
 				end
@@ -602,7 +735,7 @@ local function printTokens(tokens)
 	for i, token in ipairs(tokens) do
 		if token.tag == "newline" then
 			io.write("\n")
-			if tokens[i+1] and tokens[i+1].tag ~= "newline" then
+			if tokens[i + 1] and tokens[i + 1].tag ~= "newline" then
 				io.write(string.rep("\t", indent))
 			end
 		elseif token.tag == "indent-increase" then
@@ -617,6 +750,22 @@ local function printTokens(tokens)
 end
 
 local tokens = tokenize(file:read("*all"))
-local split = breakLong(spaceTokens(splitLines(tokens)))
+local split = splitLines(tokens)
+annotateStatementSplits(split)
+print(string.rep("-", 80))
+for _, token in ipairs(split) do
+	if token.statementFirst or token.statementOnly then
+		io.write("   <<   ")
+	end
+	io.write(token.text)
+	if token.statementLast or token.statementOnly then
+		io.write("   >>   ")
+	end
+end
+print(string.rep("-", 80))
 
-printTokens(split)
+
+local spaced = spaceTokens(split)
+local broken = breakLong(spaced)
+
+printTokens(broken)
