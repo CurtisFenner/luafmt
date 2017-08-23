@@ -9,6 +9,10 @@ if not file then
 	os.exit(1)
 end
 
+local COLUMN_LIMIT = 80
+
+--------------------------------------------------------------------------------
+
 local function matcher(pattern, tag)
 	assert(type(tag) == "string")
 	return function(text, offset)
@@ -77,7 +81,7 @@ local TOKENS = {
 				assert(stop)
 				return stop, "comment"
 			end
-			return (text:find("\n", offset) or #text), "comment"
+			return (text:find("\n", offset) or #text+1) - 1, "comment"
 		end
 	end,
 
@@ -95,6 +99,7 @@ local TOKENS = {
 			return space, "whitespace"
 		end
 	end,
+
 	-- number
 	function(text, offset)
 		local _, limit = text:find("^[0-9.-+eExa-fA-F]+", offset)
@@ -130,7 +135,6 @@ local TOKENS = {
 			return to, "word"
 		end
 	end,
-	matcher("[a-zA-Z0-9_]+", "word"),
 
 	-- accessors
 	matcher("[:.]", "access"),
@@ -195,8 +199,6 @@ local function tokenize(blob)
 	end
 	return tokens
 end
-
-local tokens = tokenize(file:read("*all"))
 
 --------------------------------------------------------------------------------
 
@@ -346,9 +348,14 @@ local function splitLines(tokens)
 		end
 		table.insert(out, {text = "", tag = "newline"})
 		for _, token in ipairs(line) do
-			table.insert(out, token)
+			if out[#out] and out[#out].tag == "newline" and token.tag == "separator" then
+				table.remove(out)
+				table.insert(out, token)
+				table.insert(out, {text = "", tag = "newline"})
+			else
+				table.insert(out, token)
+			end
 		end
-
 
 		if INCREASE[line[1].tag] or line[#line].tag == "close-parameters" then
 			table.insert(out, {text = "", tag = "indent-increase"})
@@ -358,21 +365,127 @@ local function splitLines(tokens)
 	return out
 end
 
+--------------------------------------------------------------------------------
+
 local function trimmed(s)
 	return s:match("^%s*(.*)$"):match("^(.-)%s*$")
 end
 
-local indent = 0
-local tokens = splitLines(tokens)
-for _, token in ipairs(tokens) do
-	if token.tag == "newline" then
-		io.write("\n" .. string.rep("\t", indent))
-	elseif token.tag == "indent-increase" then
-		indent = indent + 1
-	elseif token.tag == "indent-decrease" then
-		indent = indent - 1
-	else
-		io.write(trimmed(token.text) .. " ")
+local function spaceTokens(tokens)
+	local out = {}
+	local indent = 0
+
+	local GLUES = {
+		{"*", "separator"},
+		{"*", "newline"},
+		{"*", "empty"},
+		{"*", "indent-increase"},
+		{"*", "indent-decrease"},
+		{"*", "access"},
+		{"access", "*"},
+		{"word", "open"},
+		{"open", "*"},
+		{"*", "close"},
+		{"*", "close-parameters"},
+		{"function", "open"},
+		{"'#", "word"},
+		{"'#", "open"},
+		{"*", "$"},
+	}
+
+	local SPACE = {
+		{"word", "'{"},
+	}
+
+	local function lmatch(pattern, a, b)
+		if pattern == "*" then
+			return true
+		elseif pattern:sub(1, 1) == "'" then
+			return pattern:sub(2) == b
+		end
+		return pattern == a
 	end
+
+	for i, token in ipairs(tokens) do
+		if token.tag == "newline" then
+			table.insert(out, token)
+		elseif token.tag == "indent-increase" then
+			table.insert(out, token)
+		elseif token.tag == "indent-decrease" then
+			table.insert(out, token)
+		else
+			table.insert(out, {
+				text = trimmed(token.text),
+				tag = token.tag,
+			})
+			
+			local before = tokens[i]
+			local after = tokens[i+1] or {tag = "$", text = ""}
+			local glued = false
+			for _, glue in ipairs(GLUES) do
+				if lmatch(glue[1], before.tag, before.text) and lmatch(glue[2], after.tag, after.text) then
+					glued = true
+				end
+			end
+			for _, space in ipairs(SPACE) do
+				if lmatch(space[1], before.tag, before.text) and lmatch(space[2], after.tag, after.text) then
+					glued = false
+				end
+			end
+			if not glued then
+				table.insert(out, {text = " ", tag = "space"})
+			end
+		end
+	end
+
+	while out[#out] and out[#out].tag == "newline" do
+		table.remove(out)
+	end
+	while out[1] and out[1].tag == "newline" do
+		-- XXX: linear
+		table.remove(out, 1)
+	end
+
+	return out
 end
-print()
+
+--------------------------------------------------------------------------------
+
+local TAB_SIZE = 4
+
+local function breakLong(tokens)
+	local out = {}
+
+	for _, token in ipairs(tokens) do
+		table.insert(out, token)
+	end
+
+	return out
+end
+
+--------------------------------------------------------------------------------
+
+local function printTokens(tokens)
+	local indent = 0
+
+	for i, token in ipairs(tokens) do
+		if token.tag == "newline" then
+			io.write("\n")
+			if tokens[i+1] and tokens[i+1].tag ~= "newline" and tokens[i+1].tag ~= "empty" then
+				io.write(string.rep("\t", indent))
+			end
+		elseif token.tag == "indent-increase" then
+			indent = indent + 1
+		elseif token.tag == "indent-decrease" then
+			indent = indent - 1
+		else
+			io.write(token.text)
+		end
+	end
+	print()
+end
+
+local tokens = tokenize(file:read("*all"))
+local split = breakLong(spaceTokens(splitLines(tokens)))
+
+printTokens(split)
