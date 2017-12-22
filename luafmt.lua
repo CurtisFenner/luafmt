@@ -438,7 +438,7 @@ local function groupTokens(tokens)
 			context.tailTag = context.children[#context.children].tailTag
 			context.tailText = context.children[#context.children].tailText
 			context.headTag = context.children[1].headTag
-			context.headText = context.children[1].headTag
+			context.headText = context.children[1].headText
 			context = table.remove(stack)
 			assert(context)
 		else
@@ -480,7 +480,57 @@ local STATEMENT_SEPARATOR = {
 	{"*", "blank"},
 	{"close", "word"},
 	{"*", "local"},
+
+	-- Only in statement mode
+	{"`;", "*"},
 }
+
+local GLUE = {
+	{"open", "*"},
+	{"function-open", "*"},
+	{"*", "close"},
+	{"*", "function-close"},
+	{"*", "separator"},
+	
+	-- TODO: EXCEPT for `{`
+	{"word", "open"},
+	{"function", "function-open"},
+
+	{"*", "access"},
+	{"access", "*"},
+
+	{"`#", "*"},
+}
+
+local UNGLUE = {
+	{"word", "`{"},
+}
+
+local function matchLeft(m, t)
+	assert(type(m) == "string")
+
+	if m == "*" then
+		return true
+	elseif m:sub(1, 1) == "`" then
+		return m:sub(2) == t.tailText
+	end
+	return m == t.tailTag
+end
+
+local function matchRight(m, t)
+	assert(type(m) == "string")
+
+	if m == "*" then
+		return true
+	elseif m:sub(1, 1) == "`" then
+		return m:sub(2) == t.headText
+	end
+	return m == t.headTag
+end
+
+local function matchRule(rule, a, b)
+	return matchLeft(rule[1], a) and matchRight(rule[2], b)
+end
 
 -- RETURNS (multiline) text
 local function renderTokens(tree, limit, indent)
@@ -515,42 +565,29 @@ local function renderTokens(tree, limit, indent)
 			if previous then
 				space = " "
 				for _, rule in ipairs(STATEMENT_SEPARATOR) do
-					if rule[1] == "*" or rule[1] == previous.tailTag then
-						if rule[2] == "*" or rule[2] == child.headTag then
-							if INDENT_AFTER[previous.tailTag] then
-								indent = indent + 1
-							end
-							if DEDENT_BEFORE[child.headTag] then
-								indent = indent - 1
-							end
-							-- A `space` is always followed by a non-blank, so
-							-- indenting here is fine
-							space = "\n" .. string.rep("\t", indent)
-							break
+					if matchRule(rule, previous, child) then
+						if INDENT_AFTER[previous.tailTag] then
+							indent = indent + 1
 						end
+						if DEDENT_BEFORE[child.headTag] then
+							indent = indent - 1
+						end
+						-- A `space` is always followed by a non-blank, so
+						-- indenting here is fine
+						space = "\n" .. string.rep("\t", indent)
+						break
 					end
 				end
 				if space == " " then
-					if previous.tailTag == "open" or previous.tailTag == "function-open" then
-						space = ""
-					elseif child.headTag == "close" or child.headTag == "function-close" then
-						space = ""
-					elseif child.headTag == "separator" then
-						space = ""
-					elseif child.headTag == "open" or child.headTag == "function-open" then
-						if previous.tailTag == "return" then
-							space = " "
-						elseif child.headText == "{" or child.text == "{" then
-							space = " "
-						elseif previous.tailTag == "word" then
+					for _, rule in ipairs(GLUE) do
+						if matchRule(rule, previous, child) then
 							space = ""
 						end
-					elseif child.headTag == "access" then
-						space = ""
-					elseif previous.tailTag == "access" then
-						space = ""
-					elseif previous.tailTag == "operator" and previous.tailText == "#" then
-						space = ""
+					end
+					for _, rule in ipairs(UNGLUE) do
+						if matchRule(rule, previous, child) then
+							space = " "
+						end
 					end
 				end
 			end
@@ -586,22 +623,18 @@ local function renderTokens(tree, limit, indent)
 					space = BRK
 				elseif previous.tag == "blank" or child.tag == "blank" then
 					space = BRK
-				elseif previous.tailTag == "open" or previous.tailTag == "function-open" then
-					-- No spaces after opens
-					space = ""
-				elseif child.headTag == "separator" or child.headTag == "access" then
-					-- No spaces before commas / dots
-					space = ""
-				elseif previous.tailTag == "access" then
-					-- No spaces after dots
-					space = ""
-				elseif child.headTag == "close" or child.headTag == "function-close" then
-					-- No spaces before closes
-					space = ""
-				elseif child.headTag == "open" or child.headTag == "function-open" then
-					-- No spaces before (
-					if previous.tailTag == "word" then
-						space = ""
+				end
+
+				if space == " " then
+					for _, rule in ipairs(GLUE) do
+						if matchRule(rule, previous, child) then
+							space = ""
+						end
+					end
+					for _, rule in ipairs(UNGLUE) do
+						if matchRule(rule, previous, child) then
+							space = " "
+						end
 					end
 				end
 			end
