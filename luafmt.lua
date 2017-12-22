@@ -5,7 +5,6 @@ end
 
 setmetatable(_G, {__index = function(_, k) error("cannot read nil global variable `" .. k .. "`", 2) end})
 
-
 local filename = arg[1]
 if not filename then
 	printHelp()
@@ -110,6 +109,7 @@ local IS_KEYWORD = {
 	["until"] = true,
 	["while"] = true,
 	["function"] = true,
+
 	-- in line
 	["local"] = true,
 	["return"] = true,
@@ -252,6 +252,7 @@ local TOKENS = {
 			end
 		end
 	end,
+
 	-- assignment
 	matcher("=", "assign"),
 
@@ -307,9 +308,19 @@ local function filterBlanks(tokens)
 	-- Remove breaks at the beginning and ends of blocks
 	-- Mark () as part of function parameters
 	-- Distinguish do as either the beginning of a block or end of a control
+
+	local NO_BLANK_AFTER = {
+		["do"] = true,
+		["then"] = true,
+		["else"] = true,
+		["open"] = true,
+		["function-close"] = true,
+	}
+
 	local out = {}
 	local forFunction = false
 	local forControl = false
+	local wasObject = false
 	for _, token in ipairs(tokens) do
 		token = catchGap(token)
 
@@ -338,7 +349,7 @@ local function filterBlanks(tokens)
 				-- Do nothing
 			elseif out[#out] and out[#out].tag == "comment" then
 				-- Do nothing
-			elseif out[#out] then
+			elseif out[#out] and not NO_BLANK_AFTER[out[#out].tag] then
 				table.insert(out, catchGap {
 					tag = "blank",
 					text = "\n\n",
@@ -373,13 +384,15 @@ local function filterBlanks(tokens)
 		elseif token.tag == "blank" then
 			-- Don't insert blanks after an opening of a block
 			if #out > 0 then
-				local last = out[#out].tag
-				if last == "function-close" or last == "do" or last == "then" or last == "else" or last == "open" then
-					-- Do nothing
-				else
+				if not NO_BLANK_AFTER[out[#out].tag] then
 					table.insert(out, token)
 				end
 			end
+		elseif token.text == "-" and not wasObject then
+			table.insert(out, {
+				tag = "unm",
+				text = token.text,
+			})
 		else
 			-- Remove blanks before a close of a block
 			if #out > 0 and out[#out].tag == "blank" then
@@ -390,6 +403,8 @@ local function filterBlanks(tokens)
 			end
 			table.insert(out, token)
 		end
+
+		wasObject = token.tag == "close" or token.tag == "number" or token.tag == "word" or token.tag == "string"
 	end
 
 	return out
@@ -450,7 +465,6 @@ local function groupTokens(tokens)
 	return context
 end
 
-
 local STATEMENT_SEPARATOR = {
 	{"*", "return"},
 	{"*", "break"},
@@ -481,6 +495,9 @@ local STATEMENT_SEPARATOR = {
 	{"close", "word"},
 	{"*", "local"},
 
+	-- Only for long functions
+	{"function-close", "*"},
+
 	-- Only in statement mode
 	{"`;", "*"},
 }
@@ -494,12 +511,15 @@ local GLUE = {
 	
 	-- TODO: EXCEPT for `{`
 	{"word", "open"},
-	{"function", "function-open"},
+	{"*", "function-open"},
 
 	{"*", "access"},
 	{"access", "*"},
 
 	{"`#", "*"},
+	{"unm", "number"},
+	{"unm", "string"},
+	{"unm", "word"},
 }
 
 local UNGLUE = {
@@ -533,8 +553,8 @@ local function matchRule(rule, a, b)
 end
 
 -- RETURNS (multiline) text
-local function renderTokens(tree, limit, indent)
-	assert(type(limit) == "number")
+local function renderTokens(tree, column, indent)
+	assert(type(column) == "number")
 	assert(type(indent) == "number")
 
 	local INDENT_AFTER = {
@@ -556,7 +576,7 @@ local function renderTokens(tree, limit, indent)
 	-- TODO: Indent after function only necessary when newline
 	-- TODO: Ident after () {} only necessary when newline
 
-	local function renderCode(tree, limit, indent)
+	local function renderCode(tree, column, indent)
 		-- (1) attempt to render without breaks
 		local out = ""
 		for i, child in ipairs(tree.children) do
@@ -594,12 +614,16 @@ local function renderTokens(tree, limit, indent)
 
 			out = out .. space
 			local final = (out:match "[^\n]*$"):gsub("\t", string.rep(" ", TAB_COLUMNS))
-			out = out .. renderTokens(child, limit - #final, indent)
+			--print("[" .. column .. "]" .. final .. "[" .. #final .. "]")
+			out = out .. renderTokens(child, #final, indent)
 		end
 		return out
 	end
 	
-	local function renderObject(tree, limit, indent, sepBreak)
+	local function renderObject(tree, column, indent, sepBreak)
+		assert(type(sepBreak) == "boolean", "sepBreak must be boolean")
+		assert(type(indent) == "number", "indent must be number")
+
 		local out = ""
 		for i, child in ipairs(tree.children) do
 			local previous = tree.children[i - 1]
@@ -640,19 +664,23 @@ local function renderTokens(tree, limit, indent)
 			end
 			out = out .. space
 			local final = (out:match "[^\n]*$"):gsub("\t", string.rep(" ", TAB_COLUMNS))
-			out = out .. renderTokens(child, limit - #final, indent)
+			out = out .. renderTokens(child, #final, indent)
 		end
 		return out
 	end
 
 	if tree.tag == "code" then
-		return renderCode(tree, limit, indent)
+		return renderCode(tree, column, indent)
 	elseif tree.tag == "group" then
 		-- TODO
-		local c = renderObject(tree, limit, indent, false)
-		if #c > limit or c:find("\n") then
+		local c = renderObject(tree, column, indent, false)
+		if (column + #c > COLUMN_LIMIT or c:find("\n")) and #tree.children > 2 then
+			--print("Reject: " .. #c .. " > " .. column .. " or " .. tostring(c:find("\n")))
+			--print(c)
+			--print("^^^^^^^")
+			-- Don't break empty ()
 			-- Must break at local separators
-			return renderObject(tree, limit, indent, true)
+			return renderObject(tree, column, indent, true)
 		end
 		return c
 	elseif tree.tag == "blank" then
@@ -665,10 +693,15 @@ end
 --------------------------------------------------------------------------------
 
 local tokens = filterBlanks(tokenize(file:read("*all")))
+
 --print(show(tokens))
 
 local tree = groupTokens(tokens)
+
 --print(show(tree))
 
 --print(string.rep("-", 80))
-print(renderTokens(tree, COLUMN_LIMIT, 0))
+local rendered = (renderTokens(tree, 0, 0))
+
+--print(string.rep("-", 80))
+print(rendered)
