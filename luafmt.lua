@@ -3,7 +3,11 @@ local function printHelp()
 	os.exit(1)
 end
 
-setmetatable(_G, {__index = function(_, k) error("cannot read nil global variable `" .. k .. "`", 2) end})
+setmetatable(_G, {
+	__index = function(_, k)
+		error("cannot read nil global variable `" .. k .. "`", 2)
+	end,
+})
 
 local filename = arg[1]
 if not filename then
@@ -295,12 +299,14 @@ local function catchGap(obj)
 	for k, v in pairs(obj) do
 		out[k] = v
 	end
-	return setmetatable(out, {__index = function(_, key)
-		if obj[key] == nil then
-			error("no such key `" .. tostring(key) .. "`", 2)
-		end
-		return obj[key]
-	end})
+	return setmetatable(out, {
+		__index = function(_, key)
+			if obj[key] == nil then
+				error("no such key `" .. tostring(key) .. "`", 2)
+			end
+			return obj[key]
+		end,
+	})
 end
 
 local function filterBlanks(tokens)
@@ -615,7 +621,6 @@ local function renderTokens(tree, column, indent)
 
 			out = out .. space
 			local final = (out:match "[^\n]*$"):gsub("\t", string.rep(" ", TAB_COLUMNS))
-			--print("[" .. column .. "]" .. final .. "[" .. #final .. "]")
 			out = out .. renderTokens(child, #final, indent)
 		end
 		return out
@@ -677,9 +682,62 @@ local function renderTokens(tree, column, indent)
 		local tooLong = (column + #c > COLUMN_LIMIT or c:find("\n"))
 		local notEmpty = #tree.children > 2
 		local trailingComma = notEmpty and tree.children[#tree.children - 1].tailTag == "separator"
-		if (tooLong and notEmpty) or trailingComma then
+
+		if trailingComma then
+			return renderObject(tree, column, indent, true)
+		elseif tooLong and notEmpty then
 			-- Don't break empty (); always break with trailing comma
 			-- Must break at local separators
+
+			if tree.headText == "(" then
+				-- If only the final entry is too long, then only the final
+				-- entry should be broken
+
+				-- Find the last separator
+				local lastSeparator = false
+				for i = #tree.children, 1, -1 do
+					if tree.children[i].tailTag == "separator" then
+						lastSeparator = i
+						break
+					end
+				end
+				
+				if not lastSeparator then
+					-- ({
+					--     stuff
+					-- })
+
+					-- but may be too long: (asdofijasdofijasdfoijasodifja)
+					return c
+				end
+
+				local withoutLast = {
+					tag = tree.tag,
+					tailTag = tree.tailTag,
+					tailText = tree.tailText,
+					headTag = tree.headTag,
+					headText = tree.headText,
+					children = {},
+				}
+				for i = 1, lastSeparator - 1 do
+					table.insert(withoutLast.children, tree.children[i])
+				end
+
+				-- If only the last element pushes it too long, then
+				-- we don't need to break at separators in this tree
+				-- (only in the final subtree)
+				local r = renderObject(withoutLast, column, indent, false)
+				local rTooLong = (column + #r > COLUMN_LIMIT or r:find("\n"))
+				if not rTooLong then
+					local firstLine = c:match "^[^\n]*"
+					if column + #firstLine <= COLUMN_LIMIT then
+						-- The final element may be a word that doesn't fit
+						-- in the line
+						return c
+					end
+				end
+			end
+
 			return renderObject(tree, column, indent, true)
 		end
 		return c
