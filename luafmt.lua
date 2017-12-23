@@ -285,7 +285,7 @@ local function tokenize(blob)
 				break
 			end
 		end
-		assert(didCut, blob:sub(offset, offset+50))
+		assert(didCut, blob:sub(offset, offset + 50))
 	end
 	return tokens
 end
@@ -592,6 +592,7 @@ local function renderTokens(tree, column, indent)
 						if DEDENT_BEFORE[child.headTag] then
 							indent = indent - 1
 						end
+
 						-- A `space` is always followed by a non-blank, so
 						-- indenting here is fine
 						space = "\n" .. string.rep("\t", indent)
@@ -672,13 +673,12 @@ local function renderTokens(tree, column, indent)
 	if tree.tag == "code" then
 		return renderCode(tree, column, indent)
 	elseif tree.tag == "group" then
-		-- TODO
 		local c = renderObject(tree, column, indent, false)
-		if (column + #c > COLUMN_LIMIT or c:find("\n")) and #tree.children > 2 then
-			--print("Reject: " .. #c .. " > " .. column .. " or " .. tostring(c:find("\n")))
-			--print(c)
-			--print("^^^^^^^")
-			-- Don't break empty ()
+		local tooLong = (column + #c > COLUMN_LIMIT or c:find("\n"))
+		local notEmpty = #tree.children > 2
+		local trailingComma = notEmpty and tree.children[#tree.children - 1].tailTag == "separator"
+		if (tooLong and notEmpty) or trailingComma then
+			-- Don't break empty (); always break with trailing comma
 			-- Must break at local separators
 			return renderObject(tree, column, indent, true)
 		end
