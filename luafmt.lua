@@ -500,6 +500,10 @@ local STATEMENT_SEPARATOR = {
 	{"*", "blank"},
 	{"close", "word"},
 	{"*", "local"},
+	{"string", "function"},
+	{"word", "function"},
+	{"number", "function"},
+	{"close", "function"},
 
 	-- Only for long functions
 	{"function-close", "*"},
@@ -526,6 +530,8 @@ local GLUE = {
 	{"unm", "number"},
 	{"unm", "string"},
 	{"unm", "word"},
+	{"`]", "`["},
+	{"`)", "`("},
 }
 
 local UNGLUE = {
