@@ -514,7 +514,7 @@ local GLUE = {
 	{"*", "close"},
 	{"*", "function-close"},
 	{"*", "separator"},
-	
+
 	-- TODO: EXCEPT for `{`
 	{"word", "open"},
 	{"*", "function-open"},
@@ -619,13 +619,21 @@ local function renderTokens(tree, column, indent)
 				end
 			end
 
+			if child.headTag == "blank" then
+				-- Don't insert tabs before a blank line
+				space = space:gsub("[^\n]", "")
+			end
+
 			out = out .. space
-			local final = (out:match "[^\n]*$"):gsub("\t", string.rep(" ", TAB_COLUMNS))
+			local final = (out:match "[^\n]*$"):gsub(
+				"\t",
+				string.rep(" ", TAB_COLUMNS)
+			)
 			out = out .. renderTokens(child, #final, indent)
 		end
 		return out
 	end
-	
+
 	local function renderObject(tree, column, indent, sepBreak)
 		assert(type(sepBreak) == "boolean", "sepBreak must be boolean")
 		assert(type(indent) == "number", "indent must be number")
@@ -651,8 +659,10 @@ local function renderTokens(tree, column, indent)
 				elseif sepBreak and previous.tailTag == "separator" then
 					assert(previous.tag == "separator")
 					space = BRK
-				elseif previous.tag == "blank" or child.tag == "blank" then
+				elseif previous.tag == "blank" then
 					space = BRK
+				elseif child.tag == "blank" then
+					space = "\n"
 				end
 
 				if space == " " then
@@ -668,8 +678,17 @@ local function renderTokens(tree, column, indent)
 					end
 				end
 			end
+
+			-- Don't insert tabs before a blank
+			if child.headTag == "blank" then
+				space = space:gsub("[^\n]", "")
+			end
+
 			out = out .. space
-			local final = (out:match "[^\n]*$"):gsub("\t", string.rep(" ", TAB_COLUMNS))
+			local final = (out:match "[^\n]*$"):gsub(
+				"\t",
+				string.rep(" ", TAB_COLUMNS)
+			)
 			out = out .. renderTokens(child, #final, indent)
 		end
 		return out
@@ -701,13 +720,13 @@ local function renderTokens(tree, column, indent)
 						break
 					end
 				end
-				
+
 				if not lastSeparator then
 					-- ({
 					--     stuff
 					-- })
 
-					-- but may be too long: (asdofijasdofijasdfoijasodifja)
+					-- TODO: but may be too long: (asdofijasdofijasdfoijasodifja)
 					return c
 				end
 
@@ -751,15 +770,7 @@ end
 --------------------------------------------------------------------------------
 
 local tokens = filterBlanks(tokenize(file:read("*all")))
-
---print(show(tokens))
-
 local tree = groupTokens(tokens)
-
---print(show(tree))
-
---print(string.rep("-", 80))
 local rendered = (renderTokens(tree, 0, 0))
 
---print(string.rep("-", 80))
 print(rendered)
