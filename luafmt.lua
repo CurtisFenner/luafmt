@@ -530,8 +530,8 @@ local GLUE = {
 	{"unm", "number"},
 	{"unm", "string"},
 	{"unm", "word"},
-	{"`]", "`["},
-	{"`)", "`("},
+	{"close", "`["},
+	{"close", "`("},
 }
 
 local UNGLUE = {
