@@ -17,3 +17,6 @@ The script outputs the formatted version to standard output.
 * Indentation using tabs for both scope and overflowed lines
 * Blank lines above comments
 * No blanks at the beginning or ends of blocks
+
+A bash script like the following can be used to reformat all `.lua` files in a directory:
+     for f in *.lua ; do lua luafmt.lua "$f" > tmp && cat tmp > "$f" ; done
