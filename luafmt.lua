@@ -282,6 +282,7 @@ local function tokenize(blob)
 					table.insert(tokens, {
 						tag = tag,
 						text = blob:sub(offset, cut),
+						offset = offset,
 					})
 				end
 				offset = cut + 1
@@ -444,10 +445,12 @@ local function groupTokens(tokens)
 	local context = {tag = "code", children = {}}
 	local stack = {}
 	for _, token in ipairs(tokens) do
+		assert(token.text)
 		token.headText = token.text
 		token.tailText = token.text
 		token.tailTag = token.tag
 		token.headTag = token.tag
+		assert(token.headText)
 		if OPENS[token.tag] then
 			table.insert(stack, context)
 			local newContext = {tag = OPENS[token.tag], children = {token}}
@@ -691,11 +694,16 @@ local function renderTokens(tree, column, indent)
 			end
 
 			out = out .. space
-			local final = (out:match "[^\n]*$"):gsub(
-				"\t",
-				string.rep(" ", TAB_COLUMNS)
-			)
-			out = out .. renderTokens(child, #final, indent)
+			local finalLine = out:match "[^\n]*$"
+			local finalLineLength = COLUMN_LIMIT * 2
+			if #finalLine < finalLineLength then
+				finalLineLength = #finalLine:gsub(
+					"\t",
+					string.rep(" ", TAB_COLUMNS)
+				)
+			end
+			local result = renderTokens(child, finalLineLength, indent)
+			out = out .. result
 		end
 		return out
 	end
