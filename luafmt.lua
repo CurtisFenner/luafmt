@@ -318,6 +318,7 @@ local function filterBlanks(tokens)
 
 	local NO_BLANK_AFTER = {
 		["do"] = true,
+		["lone-do"] = true,
 		["then"] = true,
 		["else"] = true,
 		["open"] = true,
