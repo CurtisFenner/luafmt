@@ -634,11 +634,15 @@ local function renderTokens(tree, column, indent)
 			end
 
 			out = out .. space
-			local final = (out:match "[^\n]*$"):gsub(
-				"\t",
-				string.rep(" ", TAB_COLUMNS)
-			)
-			out = out .. renderTokens(child, #final, indent)
+			local finalLineLength = 2 * COLUMN_LIMIT
+			local finalLine = out:match "[^\n]*$"
+			if #finalLine < finalLineLength then
+				finalLineLength = #finalLine:gsub(
+					"\t",
+					string.rep(" ", TAB_COLUMNS)
+				)
+			end
+			out = out .. renderTokens(child, finalLineLength, indent)
 		end
 		return out
 	end
