@@ -9,16 +9,7 @@ setmetatable(_G, {
 	end,
 })
 
-local filename = arg[1]
-if not filename then
-	printHelp()
-end
-
-local file = io.open(filename, "r")
-if not file then
-	print("cannot open file `" .. filename .. "`")
-	os.exit(1)
-end
+--------------------------------------------------------------------------------
 
 local COLUMN_LIMIT = (arg[2] and tonumber(arg[2])) or 80
 local TAB_COLUMNS = 4
@@ -788,8 +779,46 @@ end
 
 --------------------------------------------------------------------------------
 
+-- Get command line arguments
+local filename = arg[1]
+local inplace = filename == "--f"
+if not filename then
+	printHelp()
+end
+
+if inplace then
+	filename = arg[2]
+	if not filename then
+		printHelp()
+	end
+end
+
+-- Read input
+local file = io.open(filename, "rb")
+if not file then
+	print("cannot open file `" .. filename .. "`")
+	os.exit(1)
+end
+
 local tokens = filterBlanks(tokenize(file:read("*all")))
 local tree = groupTokens(tokens)
 local rendered = (renderTokens(tree, 0, 0))
 
-print(rendered)
+file:close()
+
+-- Write output
+if inplace then
+	-- Update the file
+	local out = io.open(filename, "wb")
+	if not out then
+		print("cannot open file `" .. filename .. "`")
+		os.exit(1)
+	end
+
+	out:write(rendered)
+	out:write("\n")
+	out:close()
+else
+	-- Print to standard out
+	print(rendered)
+end
