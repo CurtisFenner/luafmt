@@ -11,8 +11,6 @@ To update the Lua file in place:
     
     lua luafmt.lua --f <lua file> [max column hint=80]
 
-The script outputs the formatted version to standard output.
-
 `luafmt.lua` in this repository is formatted using itself.
 
 * No multiple blank lines in a row
