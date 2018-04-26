@@ -1,5 +1,9 @@
 local function printHelp()
-	print("usage:\n\tlua " .. arg[0] .. " <lua file>")
+	print("usage:")
+	print("\tlua " .. arg[0] .. " <lua file> [column hint]")
+	print("\t\tto print formatted version to standard out")
+	print("usage:\n\tlua " .. arg[0] .. " --f <lua file> [column hint]")
+	print("\t\tto reformat the file in-place")
 	os.exit(1)
 end
 
