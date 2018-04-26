@@ -11,7 +11,7 @@ setmetatable(_G, {
 
 --------------------------------------------------------------------------------
 
-local COLUMN_LIMIT = (arg[2] and tonumber(arg[2])) or 80
+local COLUMN_LIMIT = 80
 local TAB_COLUMNS = 4
 
 --------------------------------------------------------------------------------
@@ -786,8 +786,12 @@ if not filename then
 	printHelp()
 end
 
+-- Get column limit hint
+COLUMN_LIMIT = (arg[2] and tonumber(arg[2])) or 80
+
 if inplace then
 	filename = arg[2]
+	COLUMN_LIMIT = (arg[3] and tonumber(arg[3])) or 80
 	if not filename then
 		printHelp()
 	end
