@@ -1,0 +1,15 @@
+local N = 7 -- print factorial
+local list = {}local f = 1 for i = 1, N do f=f*i table . insert ( list ,i )end
+print(f)
+
+function permutation(list, stack)
+	if#list==0 then return print ( table . concat ( stack ," " ) ) 
+	end
+	for i = 1, #list do
+		table.insert(stack, table.remove(list, i))
+		permutation(list, stack)
+		table.insert(list, i, table.remove(stack))
+	end
+end
+
+permutation(list, {})

@@ -21,3 +21,12 @@ The script outputs the formatted version to standard output.
 A bash script like the following can be used to reformat all `.lua` files in a directory:
 
      for f in *.lua ; do lua luafmt.lua "$f" > tmp && cat tmp > "$f" ; done
+
+Scripts which are not syntactically correct may not be formattable. The script
+will output an error and not modify the file.
+
+# Testing
+
+Run `lua test.lua` from the project directory to run tests.
+
+Right now, there are only a couple of tests.
