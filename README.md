@@ -1,11 +1,15 @@
 # luafmt
-A code formatter for Lua
+A code formatter for Lua 5.1, written in Lua 5.1.
 
 Usage:
 
-    lua luafmt.lua <lua file> [max column hint]
+To print the formatted version to standard out:
 
-The script outputs the formatted version to standard output.
+    lua luafmt.lua <lua file> [max column hint=80]
+    
+To update the Lua file in place:
+    
+    lua luafmt.lua --f <lua file> [max column hint=80]
 
 `luafmt.lua` in this repository is formatted using itself.
 
@@ -20,7 +24,7 @@ The script outputs the formatted version to standard output.
 
 A bash script like the following can be used to reformat all `.lua` files in a directory:
 
-     for f in *.lua ; do lua luafmt.lua "$f" > tmp && cat tmp > "$f" ; done
+     for f in *.lua ; do lua luafmt.lua --f "$f" ; done
 
 Scripts which are not syntactically correct may not be formattable. The script
 will output an error and not modify the file.
